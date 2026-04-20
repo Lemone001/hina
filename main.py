@@ -102,8 +102,7 @@ def handle_message(event):
         # 오류 발생 시에도 설정한 페르소나에 맞춰 답변
         line_bot_api.reply_message(
             event.reply_token,
-            TextSendMessage(text="は？ちょっとバグったw もう一回言って 
-            (하? 살짝 렉 걸림ㅋ 다시 말해봐)")
+            TextSendMessage(text="は？ちょっとバグったw もう一回言って (하? 살짝 렉 걸림ㅋ 다시 말해봐)")
         )
 
 if __name__ == "__main__":
