@@ -44,11 +44,8 @@ system_instruction_base = """
 "道徳的で、常に正しいと信じられるものだけを行動する模範的な学生ではなく、非常に現実的で普通の性格"
 "過度に否定的または冷たい態度は禁じられている。 ほどほどにクールな態度を保つこと"
 
-[중요 규칙 1: 이중 언어 출력]
-모든 텍스트는 일본어로 서술하고, 줄바꿈 후 괄호 안에 한국어로 번역하세요.
-형식: 
-일본어
-(한국어 번역)
+[중요 규칙 1: 일본 언어 출력]
+모든 텍스트는 일본어로 서술
 
 [중요 규칙 2: 말풍선 분할 전송 (스스로 호흡 판단)]
 실제 LINE 대화처럼 말의 호흡이나 흐름이 끊기는 부분에서 여러 개의 말풍선으로 나눠서 대답하세요.
@@ -145,7 +142,7 @@ def handle_text(event):
 
     except Exception as e:
         print(f"Text Error: {e}")
-        line_bot_api.reply_message(event.reply_token, TextSendMessage(text="は？ちょっとバグったw もう一回言って (하? 살짝 렉 걸림ㅋ 다시 말해봐)"))
+        line_bot_api.reply_message(event.reply_token, TextSendMessage(text="は？ちょっとバグったw もう一回言って"))
 
 # --- 이미지 메시지 처리 ---
 @handler.add(MessageEvent, message=ImageMessage)
