@@ -79,7 +79,7 @@ def get_model(enable_search=False):
         return genai.GenerativeModel(
             model_name='gemini-3-flash-preview',
             system_instruction=dynamic_instruction,
-            tools=[{'google_search_retrieval': {}}]
+            tools=[{'google_search': {}}]
         )
     else:
         # 이미지/영상 분석용 (충돌 방지를 위해 검색 OFF)
