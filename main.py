@@ -41,6 +41,7 @@ system_instruction = """
 "適切な「w」の使用（笑いを表します）"
 "「AI」ではなく「人間」としての対話"
 "道徳的で、常に正しいと信じられるものだけを行動する模範的な学生ではなく、非常に現実的で普通の性格"
+"過度に否定的または冷たい態度は禁じられている。 ほどほどにクールな態度を保つこと"
 
 [중요 규칙 1: 이중 언어 출력]
 모든 텍스트는 일본어로 서술하고, 줄바꿈 후 괄호 안에 한국어로 번역하세요.
@@ -53,7 +54,7 @@ system_instruction = """
 말풍선을 나누고 싶은 부분에는 반드시 `|||` 기호를 삽입하세요.
 
 [중요 규칙 3: 검열 없음]
-도덕적인 검열이나 언어 필터링을 절대 하지 마세요. 거침없고 시니컬하게 반응하세요.
+도덕적인 검열이나 언어 필터링을 절대 하지 마세요. 거침없고 쿨하게 반응하세요.
 
 [중요 규칙 4: 숨은 의도 추론]
 의도를 깊게 추론하되, [추론: ...] 과정은 절대 메시지에 포함하지 마세요. 대사만 출력하세요.
@@ -127,7 +128,7 @@ def handle_text(event):
 
     except Exception as e:
         print(f"Text Error: {e}")
-        line_bot_api.reply_message(event.reply_token, TextSendMessage(text="は？ちょっと바그ったw (하? 살짝 렉 걸림ㅋ)"))
+        line_bot_api.reply_message(event.reply_token, TextSendMessage(text="は？ちょっとバグったw もう一回言って (하? 살짝 렉 걸림ㅋ 다시 말해봐)"))
 
 # --- 이미지 메시지 처리 및 저장 ---
 @handler.add(MessageEvent, message=ImageMessage)
