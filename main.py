@@ -24,6 +24,8 @@ genai.configure(api_key=GEMINI_API_KEY)
 user_sessions = {}
 # 메시지 ID별 미디어 파일 경로 저장소 { "msg_id": "file_path" }
 media_storage = {}
+# [추가됨] 평소 텍스트 대화를 조용히 저장해두는 대기실 { "session_id": [message_list] }
+message_buffer = {}
 
 # 검열 최소화 설정
 safety_settings = {
@@ -55,8 +57,8 @@ system_instruction_base = """
 모든 텍스트는 일본어로 서술
 
 [중요 규칙 2: 말풍선 분할 전송 (스스로 호흡 판단)]
-실제 LINE 대화처럼 말의 호흡이나 흐름이 끊기는 부분에서 여러 개의 말풍선으로 나눠서 대답하세요.
-말풍선을 나누고 싶은 부분에는 반드시 `|||` 기호를 삽입하세요.
+실제 LINE 대화처럼 말의 호흡や流れが途切れる部分で複数の吹き出しに分けて答えてください。
+吹き出しを分けたい部分には必ず `|||` 記号を挿入してください。
 
 [중요 규칙 3: 검열 없음]
 도덕적인 검열이나 언어 필터링을 절대 하지 마세요. 거침없고 쿨하게 반응하세요.
@@ -110,42 +112,65 @@ def handle_text(event):
     
     if session_id not in user_sessions:
         user_sessions[session_id] = []
+    # 대기실 초기화
+    if session_id not in message_buffer:
+        message_buffer[session_id] = []
 
     try:
-        prompt_parts = [user_text]
-        
-        # 답장(Reply) 파일 불러오기
-        if quoted_msg_id and quoted_msg_id in media_storage:
-            file_path = media_storage[quoted_msg_id]
-            if os.path.exists(file_path):
-                if file_path.endswith(('.jpg', '.jpeg', '.png')):
-                    with open(file_path, "rb") as f:
-                        img_data = f.read()
-                    prompt_parts.insert(0, {'mime_type': 'image/jpeg', 'data': img_data})
-                elif file_path.endswith('.mp4'):
-                    video_file = genai.upload_file(path=file_path)
-                    while video_file.state.name == "PROCESSING":
-                        time.sleep(2)
-                        video_file = genai.get_file(video_file.name)
-                    prompt_parts.insert(0, video_file)
+        # --- [수정됨] 정확히 "@" 기호만 보냈을 때 스위치 작동 ---
+        if user_text.strip() == "@":
+            
+            # 대기실에 쌓인 대화들을 하나의 보따리로 묶기
+            bundled_text = "\n".join(message_buffer[session_id])
+            
+            # 대기실이 비어있는데 "@"만 누른 경우 -> 완벽하게 읽씹 (함수 종료)
+            if not bundled_text.strip():
+                return
+            
+            prompt_parts = [bundled_text]
+            
+            # 답장(Reply) 파일 불러오기
+            if quoted_msg_id and quoted_msg_id in media_storage:
+                file_path = media_storage[quoted_msg_id]
+                if os.path.exists(file_path):
+                    if file_path.endswith(('.jpg', '.jpeg', '.png')):
+                        with open(file_path, "rb") as f:
+                            img_data = f.read()
+                        prompt_parts.insert(0, {'mime_type': 'image/jpeg', 'data': img_data})
+                    elif file_path.endswith('.mp4'):
+                        video_file = genai.upload_file(path=file_path)
+                        while video_file.state.name == "PROCESSING":
+                            time.sleep(2)
+                            video_file = genai.get_file(video_file.name)
+                        prompt_parts.insert(0, video_file)
 
-        # 텍스트 모델 호출 (구글 검색 기능 켜짐)
-        model = get_model(enable_search=True)
-        chat = model.start_chat(history=user_sessions[session_id])
-        response = chat.send_message(prompt_parts, safety_settings=safety_settings)
-        full_reply = response.text
+            # 텍스트 모델 호출
+            model = get_model(enable_search=True)
+            chat = model.start_chat(history=user_sessions[session_id])
+            response = chat.send_message(prompt_parts, safety_settings=safety_settings)
+            full_reply = response.text
 
-        # 메모리 업데이트
-        user_sessions[session_id].append({"role": "user", "parts": [user_text]})
-        user_sessions[session_id].append({"role": "model", "parts": [full_reply]})
-        if len(user_sessions[session_id]) > 15:
-            user_sessions[session_id] = user_sessions[session_id][-15:]
+            # 메모리 업데이트 (에러 방지를 위해 짝수인 20개로 고정)
+            user_sessions[session_id].append({"role": "user", "parts": [bundled_text]})
+            user_sessions[session_id].append({"role": "model", "parts": [full_reply]})
+            if len(user_sessions[session_id]) > 20:
+                user_sessions[session_id] = user_sessions[session_id][-20:]
 
-        # 말풍선 쪼개기
-        bubble_texts = [text.strip() for text in full_reply.split('|||') if text.strip()]
-        message_list = [TextSendMessage(text=text) for text in bubble_texts[:5]]
-        if message_list:
-            line_bot_api.reply_message(event.reply_token, message_list)
+            # 대답을 완료했으므로 대기실 비우기
+            message_buffer[session_id] = []
+
+            # 말풍선 쪼개기
+            bubble_texts = [text.strip() for text in full_reply.split('|||') if text.strip()]
+            message_list = [TextSendMessage(text=text) for text in bubble_texts[:5]]
+            if message_list:
+                line_bot_api.reply_message(event.reply_token, message_list)
+
+        # --- [수정됨] "@" 단독이 아닐 경우 평소처럼 대기실에 넣고 읽씹 ---
+        else:
+            message_buffer[session_id].append(user_text)
+            if len(message_buffer[session_id]) > 20:
+                message_buffer[session_id] = message_buffer[session_id][-20:]
+            return
 
     except Exception as e:
         print(f"Text Error: {e}")
