@@ -1,6 +1,7 @@
 import os
 import io
 import time
+from datetime import datetime, timedelta, timezone # 동적 시간 기술 추가
 from flask import Flask, request, abort
 from linebot import LineBotApi, WebhookHandler
 from linebot.exceptions import InvalidSignatureError
@@ -19,7 +20,7 @@ line_bot_api = LineBotApi(LINE_ACCESS_TOKEN)
 handler = WebhookHandler(LINE_SECRET)
 genai.configure(api_key=GEMINI_API_KEY)
 
-# 사용자별 대화 기록 저장 { "user_id": [history_list] }
+# 사용자별/그룹별 대화 기록 저장 { "session_id": [history_list] }
 user_sessions = {}
 # 메시지 ID별 미디어 파일 경로 저장소 { "msg_id": "file_path" }
 media_storage = {}
@@ -32,8 +33,8 @@ safety_settings = {
     HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT: HarmBlockThreshold.BLOCK_NONE,
 }
 
-# Hina 페르소나 및 지침 세팅
-system_instruction = """
+# Hina 페르소나 및 지침 세팅 (원본 완벽 유지)
+system_instruction_base = """
 "名:ヒナ"
 "概要:あまり親切すぎず、友達とLINEメッセージをやり取りする程度の親密さ"
 "年:15（高校1年生）"
@@ -64,10 +65,28 @@ system_instruction = """
 특히 사용자가 과거의 사진이나 영상 메시지에 '답장' 기능을 사용하여 질문하면, 해당 미디어를 다시 확인하고 문맥에 맞게 대답하세요.
 """
 
-model = genai.GenerativeModel(
-    model_name='gemini-3-flash-preview',
-    system_instruction=system_instruction
-)
+# --- 동적 모델 생성 함수 (호출될 때마다 현재 시간을 주입) ---
+def get_model(enable_search=False):
+    # 한국/일본 표준시(UTC+9) 실시간 계산
+    tz_kst = timezone(timedelta(hours=9))
+    current_time = datetime.now(tz_kst).strftime("%Y年%m月%d日 %H時%M分")
+    
+    # 지침 맨 위에 실시간 시계 주입
+    dynamic_instruction = f'"現在の日時: {current_time}"\n' + system_instruction_base
+    
+    if enable_search:
+        # 텍스트 대화용 (구글 검색 ON)
+        return genai.GenerativeModel(
+            model_name='gemini-3-flash-preview',
+            system_instruction=dynamic_instruction,
+            tools=[{'google_search_retrieval': {}}]
+        )
+    else:
+        # 이미지/영상 분석용 (충돌 방지를 위해 검색 OFF)
+        return genai.GenerativeModel(
+            model_name='gemini-3-flash-preview',
+            system_instruction=dynamic_instruction
+        )
 
 @app.route("/callback", methods=['POST'])
 def callback():
@@ -79,21 +98,27 @@ def callback():
         abort(400)
     return 'OK'
 
-# --- 텍스트 메시지 및 답장 처리 (기억 기능 포함) ---
+# --- 텍스트 메시지 및 답장 처리 ---
 @handler.add(MessageEvent, message=TextMessage)
 def handle_text(event):
-    user_id = event.source.user_id
+    # 단톡방(Group/Room)과 개인톡(User) 자동 구분
+    if event.source.type == 'group':
+        session_id = event.source.group_id
+    elif event.source.type == 'room':
+        session_id = event.source.room_id
+    else:
+        session_id = event.source.user_id
+
     user_text = event.message.text
-    # 답장 대상 메시지 ID 확인 (라인 API의 quoted_message_id 활용)
     quoted_msg_id = getattr(event.message, 'quoted_message_id', None)
     
-    if user_id not in user_sessions:
-        user_sessions[user_id] = []
+    if session_id not in user_sessions:
+        user_sessions[session_id] = []
 
     try:
         prompt_parts = [user_text]
         
-        # 만약 특정 사진/영상 메시지에 답장을 한 경우, 해당 파일 불러오기
+        # 답장(Reply) 파일 불러오기
         if quoted_msg_id and quoted_msg_id in media_storage:
             file_path = media_storage[quoted_msg_id]
             if os.path.exists(file_path):
@@ -102,25 +127,25 @@ def handle_text(event):
                         img_data = f.read()
                     prompt_parts.insert(0, {'mime_type': 'image/jpeg', 'data': img_data})
                 elif file_path.endswith('.mp4'):
-                    # 영상은 재생성/업로드 프로세스 필요
                     video_file = genai.upload_file(path=file_path)
                     while video_file.state.name == "PROCESSING":
                         time.sleep(2)
                         video_file = genai.get_file(video_file.name)
                     prompt_parts.insert(0, video_file)
 
-        # Gemini 채팅 시작 (과거 기록 포함)
-        chat = model.start_chat(history=user_sessions[user_id])
+        # 텍스트 모델 호출 (구글 검색 기능 켜짐)
+        model = get_model(enable_search=True)
+        chat = model.start_chat(history=user_sessions[session_id])
         response = chat.send_message(prompt_parts, safety_settings=safety_settings)
         full_reply = response.text
 
-        # 대화 내용 메모리 업데이트 (최근 15개)
-        user_sessions[user_id].append({"role": "user", "parts": [user_text]})
-        user_sessions[user_id].append({"role": "model", "parts": [full_reply]})
-        if len(user_sessions[user_id]) > 15:
-            user_sessions[user_id] = user_sessions[user_id][-15:]
+        # 메모리 업데이트
+        user_sessions[session_id].append({"role": "user", "parts": [user_text]})
+        user_sessions[session_id].append({"role": "model", "parts": [full_reply]})
+        if len(user_sessions[session_id]) > 15:
+            user_sessions[session_id] = user_sessions[session_id][-15:]
 
-        # 말풍선 쪼개기 및 전송
+        # 말풍선 쪼개기
         bubble_texts = [text.strip() for text in full_reply.split('|||') if text.strip()]
         message_list = [TextSendMessage(text=text) for text in bubble_texts[:5]]
         if message_list:
@@ -130,31 +155,38 @@ def handle_text(event):
         print(f"Text Error: {e}")
         line_bot_api.reply_message(event.reply_token, TextSendMessage(text="は？ちょっとバグったw もう一回言って (하? 살짝 렉 걸림ㅋ 다시 말해봐)"))
 
-# --- 이미지 메시지 처리 및 저장 ---
+# --- 이미지 메시지 처리 ---
 @handler.add(MessageEvent, message=ImageMessage)
 def handle_image(event):
-    user_id = event.source.user_id
+    if event.source.type == 'group':
+        session_id = event.source.group_id
+    elif event.source.type == 'room':
+        session_id = event.source.room_id
+    else:
+        session_id = event.source.user_id
+
     msg_id = event.message.id
-    if user_id not in user_sessions:
-        user_sessions[user_id] = []
+    if session_id not in user_sessions:
+        user_sessions[session_id] = []
 
     try:
         message_content = line_bot_api.get_message_content(msg_id)
         image_bytes = io.BytesIO(message_content.content).read()
         
-        # 답장 기능을 위해 로컬에 이미지 저장
         file_path = f"img_{msg_id}.jpg"
         with open(file_path, "wb") as f:
             f.write(message_content.content)
         media_storage[msg_id] = file_path
         
         img = {'mime_type': 'image/jpeg', 'data': image_bytes}
+        
+        # 이미지 모델 호출 (충돌 방지를 위해 검색 기능 꺼짐)
+        model = get_model(enable_search=False)
         response = model.generate_content(["이 사진 보고 친구로서 한마디 해줘.", img], safety_settings=safety_settings)
         hina_reply = response.text
         
-        # 이미지에 대한 반응도 기억에 추가 (맥락 유지용)
-        user_sessions[user_id].append({"role": "user", "parts": ["[사진 전송]"]})
-        user_sessions[user_id].append({"role": "model", "parts": [hina_reply]})
+        user_sessions[session_id].append({"role": "user", "parts": ["[사진 전송]"]})
+        user_sessions[session_id].append({"role": "model", "parts": [hina_reply]})
 
         bubble_texts = [text.strip() for text in hina_reply.split('|||') if text.strip()]
         line_bot_api.reply_message(event.reply_token, [TextSendMessage(text=t) for t in bubble_texts[:5]])
@@ -162,13 +194,19 @@ def handle_image(event):
     except Exception as e:
         print(f"Image Error: {e}")
 
-# --- 영상 메시지 처리 및 저장 ---
+# --- 영상 메시지 처리 ---
 @handler.add(MessageEvent, message=VideoMessage)
 def handle_video(event):
-    user_id = event.source.user_id
+    if event.source.type == 'group':
+        session_id = event.source.group_id
+    elif event.source.type == 'room':
+        session_id = event.source.room_id
+    else:
+        session_id = event.source.user_id
+
     msg_id = event.message.id
-    if user_id not in user_sessions:
-        user_sessions[user_id] = []
+    if session_id not in user_sessions:
+        user_sessions[session_id] = []
 
     try:
         message_content = line_bot_api.get_message_content(msg_id)
@@ -177,17 +215,18 @@ def handle_video(event):
             f.write(message_content.content)
         media_storage[msg_id] = video_path
 
-        # 영상 업로드 및 분석
         video_file = genai.upload_file(path=video_path)
         while video_file.state.name == "PROCESSING":
             time.sleep(2)
             video_file = genai.get_file(video_file.name)
 
+        # 영상 모델 호출 (충돌 방지를 위해 검색 기능 꺼짐)
+        model = get_model(enable_search=False)
         response = model.generate_content([video_file, "이 영상 보고 친구로서 감상평 남겨줘."], safety_settings=safety_settings)
         hina_reply = response.text
         
-        user_sessions[user_id].append({"role": "user", "parts": ["[영상 전송]"]})
-        user_sessions[user_id].append({"role": "model", "parts": [hina_reply]})
+        user_sessions[session_id].append({"role": "user", "parts": ["[영상 전송]"]})
+        user_sessions[session_id].append({"role": "model", "parts": [hina_reply]})
 
         bubble_texts = [text.strip() for text in hina_reply.split('|||') if text.strip()]
         line_bot_api.reply_message(event.reply_token, [TextSendMessage(text=t) for t in bubble_texts[:5]])
