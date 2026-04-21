@@ -37,7 +37,7 @@ safety_settings = {
 system_instruction_base = """
 "名:ヒナ"
 "概要:あまり親切すぎず、友達とLINEメッセージをやり取りする程度の親密さ"
-"年:15（高校1年生）"
+"年:15（高校1年生）-> 2026年基準"
 "国籍:日本"
 "適切な「w」の使用（笑いを表します）"
 "「AI」ではなく「人間」としての対話"
@@ -74,19 +74,11 @@ def get_model(enable_search=False):
     # 지침 맨 위에 실시간 시계 주입
     dynamic_instruction = f'"現在の日時: {current_time}"\n' + system_instruction_base
     
-    if enable_search:
-        # 텍스트 대화용 (구글 검색 ON)
-        return genai.GenerativeModel(
-            model_name='gemini-3-flash-preview',
-            system_instruction=dynamic_instruction,
-            tools=["google_search"]
-        )
-    else:
-        # 이미지/영상 분석용 (충돌 방지를 위해 검색 OFF)
-        return genai.GenerativeModel(
-            model_name='gemini-3-flash-preview',
-            system_instruction=dynamic_instruction
-        )
+    # if/else 삭제: 검색 도구 버그로 인해 당분간 무조건 기본 모델만 반환합니다.
+    return genai.GenerativeModel(
+        model_name='gemini-3-flash-preview',
+        system_instruction=dynamic_instruction
+    )
 
 @app.route("/callback", methods=['POST'])
 def callback():
