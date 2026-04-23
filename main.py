@@ -88,7 +88,7 @@ def get_model(enable_search=False):
     
     # if/else 삭제: 검색 도구 버그로 인해 당분간 무조건 기본 모델만 반환합니다.
     return genai.GenerativeModel(
-        model_name='gemini-3-flash-preview',
+        model_name='gemini-2.5-pro',
         system_instruction=dynamic_instruction
     )
 
@@ -156,11 +156,11 @@ def handle_text(event):
             response = chat.send_message(prompt_parts, safety_settings=safety_settings)
             full_reply = response.text
 
-            # 메모리 업데이트 (에러 방지를 위해 짝수인 20개로 고정)
+            # 메모리 업데이트 (에러 방지를 위해 짝수인 6개로 고정)
             user_sessions[session_id].append({"role": "user", "parts": [bundled_text]})
             user_sessions[session_id].append({"role": "model", "parts": [full_reply]})
-            if len(user_sessions[session_id]) > 20:
-                user_sessions[session_id] = user_sessions[session_id][-20:]
+            if len(user_sessions[session_id]) > 6:
+                user_sessions[session_id] = user_sessions[session_id][-6:]
 
             # 대답을 완료했으므로 대기실 비우기
             message_buffer[session_id] = []
@@ -174,8 +174,8 @@ def handle_text(event):
         # --- [수정됨] "@" 단독이 아닐 경우 평소처럼 대기실에 넣고 읽씹 ---
         else:
             message_buffer[session_id].append(user_text)
-            if len(message_buffer[session_id]) > 20:
-                message_buffer[session_id] = message_buffer[session_id][-20:]
+            if len(message_buffer[session_id]) > 6:
+                message_buffer[session_id] = message_buffer[session_id][-6:]
             return
 
     except Exception as e:
