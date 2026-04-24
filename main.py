@@ -91,7 +91,7 @@ def get_model(enable_search=False):
     
     # if/else 삭제: 검색 도구 버그로 인해 당분간 무조건 기본 모델만 반환합니다.
     return genai.GenerativeModel(
-        model_name='gemini-3.0-fresh-preview',
+        model_name='gemini-3-flash-preview',
         system_instruction=dynamic_instruction
     )
 
